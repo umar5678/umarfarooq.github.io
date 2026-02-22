@@ -1,75 +1,190 @@
-import type { BlogPost } from '@/types';
+import fs from 'fs';
+import path from 'path';
+import matter from 'gray-matter';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import remarkRehype from 'remark-rehype';
+import rehypeStringify from 'rehype-stringify';
+import rehypeSlug from 'rehype-slug';
+import rehypeAutolinkHeadings from 'rehype-autolink-headings';
+import rehypeHighlight from 'rehype-highlight';
+import type { BlogPost, BlogPostMeta, TocItem } from '@/types';
 
-const posts: BlogPost[] = [
-  {
-    slug: 'why-i-migrated-api-v1-to-v2',
-    title: 'Why I Migrated from API v1 to v2 Mid-Project',
-    description:
-      'The architectural decisions behind restructuring a production server while feature development continued.',
-    date: '2025-01-15',
-    tags: ['architecture', 'backend', 'engineering'],
-    readingTime: '8 min read',
-    published: true,
-    content: [
-      'When I first started building the restaurant management system, the scope was straightforward: a public-facing web app, an admin dashboard embedded at /admin, a thermal printer integration, and a handful of React Native endpoints. API v1 handled all of this with a flat folder structure — models, routes, controllers, and shared helpers.',
-      'Then the client asked for a structural change. He wanted the admin dashboard completely separated from the public app. He also wanted a dedicated receptionist dashboard. His initial preference was desktop applications for both.',
-      'I proposed web apps instead — standalone applications hosted on subdomains of the same domain. Each app would be fully independent and isolated, but without the deployment and maintenance overhead of native desktop software. The client agreed.',
-      'This decision required a full redesign of the server. The flat v1 structure could not support multiple independent clients, each needing their own real-time synchronization, authentication flows, and data access patterns. I migrated to a modular architecture where each feature became a self-contained module with four files: validation (Zod), routes (with inline Swagger docs), controller, and service.',
-      'The migration also introduced Redis-based session caching, dual WebSocket transports (Socket.IO for web clients, native ws for the Electron printer app), and automatic API documentation powered by zod-to-openapi. Updating a Zod validation schema now automatically updates the Swagger docs — no manual synchronization required.',
-      'The lesson: architecture decisions made at the start of a project are not permanent. When the scope changes, the architecture must evolve with it. The cost of not evolving is technical debt that compounds with every new feature.',
-    ],
-  },
-  {
-    slug: 'printing-receipts-pakistan-to-belgium',
-    title: 'Printing Receipts from Pakistan to Belgium',
-    description:
-      'How I connected to a thermal printer 6,000 km away — with no tutorial, no guide, and no physical access.',
-    date: '2025-01-08',
-    tags: ['electron', 'problem-solving', 'hardware'],
-    readingTime: '6 min read',
-    published: true,
-    content: [
-      'The thermal printer was sitting in the client\'s restaurant kitchen in Belgium. I was working from Pakistan. There was no YouTube tutorial, no blog post, and no ready-made guide for what I needed to do.',
-      'The requirement was specific: connect to that particular thermal printer model, send structured order data, and trigger silent printing — no dialog boxes, no user interaction. When a customer places an order, the receipt should print automatically in the kitchen.',
-      'I started with deep research: reading the printer\'s user manual, scouring documentation for the ESC/POS command set, and piecing together anything that could point me in the right direction. I tried, failed, tried again, and failed again.',
-      'Eventually, the Electron app was listening for WebSocket events from the server, formatting order data into a structured receipt layout, and sending it to the printer. The printer was producing receipts on the other side of the world.',
-      'Because the hardware was remote, I had to guide the client through every physical step — where to connect cables, how to assign a static IP, how to reset the printer and retrieve its network address. I worked on his machine through remote desktop to configure the printer properly.',
-      'I deliberately tackled this before starting the main project. Previous developers had been stuck at exactly this point. I built a test app and a sandbox server — once I confirmed the receipt printed successfully from Pakistan to Belgium, I knew the rest of the project was viable.',
-    ],
-  },
-  {
-    slug: 'what-solo-development-taught-me',
-    title: 'What 5 Months of Solo Full-Stack Development Taught Me',
-    description:
-      'Lessons on architecture, communication, scope management, and knowing when good enough is the right call.',
-    date: '2025-01-01',
-    tags: ['career', 'lessons', 'freelancing'],
-    readingTime: '10 min read',
-    published: true,
-    content: [
-      'I used to believe that everything should be perfect. Every function, every component, every API response — meticulously crafted to an ideal standard. Five months of building a complete platform solo taught me that reliability and "good enough" are often more valuable than perfection.',
-      'The restaurant management system spans six interconnected platforms: a customer-facing PWA, an admin dashboard, a receptionist dashboard, a React Native mobile app, an Electron thermal printer application, and a Node.js server with real-time synchronization across all of them. I built every piece alone.',
-      'The most important skill I developed was not technical. It was communication. The client came to me after previous developers had failed — they had simply cloned his existing Wix website without understanding the actual problem. I took a different approach: I listened, asked questions, documented my understanding, and shared it back before writing any code.',
-      'Scope management was another critical lesson. There was a point where the relationship between the client and my CEO became strained — tensions around scope, expectations, and communication. I stepped in, mediated the conflict, and kept the project on track.',
-      'Looking back, the experience taught me that building software is fundamentally about solving problems for people. The technology is a tool. The real skill is understanding what needs to be built, communicating clearly, and delivering something that works — reliably, on time, and in a way that the client can trust.',
-    ],
-  },
-];
+const BLOG_DIR = path.join(process.cwd(), 'src/content/blog');
 
-export function getBlogPosts(): BlogPost[] {
-  return posts
-    .filter((p) => p.published)
+// ── Helpers ──
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function calculateReadingTime(text: string): { text: string; words: number } {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const minutes = Math.ceil(words / 200);
+  return { text: `${minutes} min read`, words };
+}
+
+function extractToc(markdown: string): TocItem[] {
+  const lines = markdown.split('\n');
+  const headings: TocItem[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+
+    const match = line.match(/^(#{2,3})\s+(.+)$/);
+    if (match) {
+      const level = match[1].length;
+      const text = match[2].trim();
+      headings.push({ id: slugify(text), text, level });
+    }
+  }
+
+  return headings;
+}
+
+function getMarkdownFiles(): string[] {
+  if (!fs.existsSync(BLOG_DIR)) return [];
+  return fs
+    .readdirSync(BLOG_DIR)
+    .filter((file) => file.endsWith('.md'))
+    .sort();
+}
+
+function parsePostMeta(filename: string): BlogPostMeta | null {
+  const filepath = path.join(BLOG_DIR, filename);
+  const raw = fs.readFileSync(filepath, 'utf-8');
+  const { data, content } = matter(raw);
+
+  if (!data.published) return null;
+
+  const { text, words } = calculateReadingTime(content);
+
+  return {
+    slug: filename.replace(/\.md$/, ''),
+    title: data.title || '',
+    description: data.description || '',
+    date: data.date || '',
+    updated: data.updated || undefined,
+    tags: data.tags || [],
+    readingTime: text,
+    wordCount: words,
+    published: data.published ?? false,
+  };
+}
+
+// ── Public API ──
+
+export function getBlogPosts(): BlogPostMeta[] {
+  return getMarkdownFiles()
+    .map(parsePostMeta)
+    .filter((post): post is BlogPostMeta => post !== null)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
-export function getRecentBlogPosts(count = 3): BlogPost[] {
+export function getRecentBlogPosts(count = 3): BlogPostMeta[] {
   return getBlogPosts().slice(0, count);
 }
 
-export function getBlogPost(slug: string): BlogPost | undefined {
-  return posts.find((p) => p.slug === slug && p.published);
+export async function getBlogPost(slug: string): Promise<BlogPost | null> {
+  const filename = `${slug}.md`;
+  const filepath = path.join(BLOG_DIR, filename);
+
+  if (!fs.existsSync(filepath)) return null;
+
+  const raw = fs.readFileSync(filepath, 'utf-8');
+  const { data, content } = matter(raw);
+
+  if (!data.published) return null;
+
+  const { text, words } = calculateReadingTime(content);
+  const toc = extractToc(content);
+
+  const result = await unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypeSlug)
+    .use(rehypeAutolinkHeadings, {
+      behavior: 'prepend',
+      properties: {
+        className: ['heading-anchor'],
+        ariaHidden: 'true',
+        tabIndex: -1,
+      },
+      content: [
+        {
+          type: 'element',
+          tagName: 'span',
+          properties: { className: ['heading-anchor-icon'] },
+          children: [{ type: 'text', value: '#' }],
+        },
+      ],
+    })
+    .use(rehypeHighlight, { detect: true })
+    .use(rehypeStringify, { allowDangerousHtml: true })
+    .process(content);
+
+  return {
+    slug,
+    title: data.title || '',
+    description: data.description || '',
+    date: data.date || '',
+    updated: data.updated || undefined,
+    tags: data.tags || [],
+    readingTime: text,
+    wordCount: words,
+    published: true,
+    content: String(result),
+    toc,
+  };
 }
 
 export function getAllBlogSlugs(): string[] {
-  return posts.filter((p) => p.published).map((p) => p.slug);
+  return getBlogPosts().map((p) => p.slug);
+}
+
+export function getAllTags(): string[] {
+  const tags = new Set<string>();
+  getBlogPosts().forEach((post) => post.tags.forEach((tag) => tags.add(tag)));
+  return Array.from(tags).sort();
+}
+
+export function getPostsByTag(tag: string): BlogPostMeta[] {
+  return getBlogPosts().filter((post) => post.tags.includes(tag));
+}
+
+export function getRelatedPosts(
+  currentSlug: string,
+  tags: string[],
+  count = 3
+): BlogPostMeta[] {
+  return getBlogPosts()
+    .filter((p) => p.slug !== currentSlug)
+    .map((p) => ({
+      ...p,
+      relevance: p.tags.filter((t) => tags.includes(t)).length,
+    }))
+    .filter((p) => p.relevance > 0)
+    .sort((a, b) => b.relevance - a.relevance)
+    .slice(0, count);
+}
+
+export function getPostNavigation(currentSlug: string) {
+  const posts = getBlogPosts();
+  const index = posts.findIndex((p) => p.slug === currentSlug);
+  if (index === -1) return { prev: undefined, next: undefined };
+
+  return {
+    prev: index < posts.length - 1 ? posts[index + 1] : undefined,
+    next: index > 0 ? posts[index - 1] : undefined,
+  };
 }

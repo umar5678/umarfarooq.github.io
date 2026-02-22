@@ -1,3 +1,9 @@
+export interface ProjectImage {
+  src: string;
+  alt: string;
+  caption?: string;
+}
+
 export interface ProjectMetric {
   value: string;
   label: string;
@@ -8,6 +14,7 @@ export interface Platform {
   description: string;
   techStack: string[];
   features: string[];
+  image?: string;
 }
 
 export interface Challenge {
@@ -42,6 +49,8 @@ export interface Project {
   techStack: string[];
   highlights: string[];
   metrics: ProjectMetric[];
+  coverImage?: string;
+  images?: ProjectImage[];
   liveUrl?: string;
   githubUrl?: string;
   clientLocation?: string;
