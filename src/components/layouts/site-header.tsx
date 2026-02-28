@@ -9,6 +9,14 @@ import { cn } from '@/lib/utils';
 import { siteConfig } from '@/content/site';
 import { mainNav } from '@/content/navigation';
 import { MobileNav } from './mobile-nav';
+import { Logo } from '../logo/Logo';
+import { HexLogo } from '../logo/HexLogo';
+import { LogoContinuousStroke } from '../logo/LogoContinuousStrok';
+import { LogoNegativeGrid } from '../logo/LogoNegativeGrid';
+import { LogoStackTrace } from '../logo/LogoStackTrace';
+import { LogoDeconstructed } from '../logo/LogoDeconstructed';
+import { LogoCodeBlock } from '../logo/LogoCodeBlock';
+import { LogoMark } from '../logo/LogoMark';
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -43,9 +51,17 @@ export function SiteHeader() {
           {/* ── Name ── */}
           <Link
             href="/"
-            className="shrink-0 text-base font-bold tracking-tight"
+            className="shrink-0 text-base font-bold tracking-tight mt-6"
           >
-            {firstName}
+            {/* <Logo /> */}
+            {/* <HexLogo /> */}
+            <LogoContinuousStroke size={28} />
+            {/* <LogoMark /> */}
+            {/* <LogoNegativeGrid /> */}
+            {/* <LogoStackTrace /> */}
+            {/* <LogoDeconstructed /> */}
+            {/* <LogoCodeBlock /> */}
+            {/* {firstName} */}
             <span className="text-muted-foreground/25">.</span>
           </Link>
 
